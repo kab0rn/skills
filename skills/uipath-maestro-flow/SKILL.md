@@ -306,7 +306,9 @@ When the build completes, present the next-step dropdown described in the [Compl
 | **Manage variables and expressions** | [references/variables-and-expressions.md](references/variables-and-expressions.md) + [JSON: Variable Operations](references/flow-editing-operations-json.md#variable-operations) |
 | **Write `=js:` expressions** | [references/variables-and-expressions.md — Expression System](references/variables-and-expressions.md) |
 | **Orchestrate RPA, agents, apps** | Relevant resource plugin: [rpa](references/plugins/rpa/), [agent](references/plugins/agent/), [agentic-process](references/plugins/agentic-process/), [flow](references/plugins/flow/), [api-workflow](references/plugins/api-workflow/), [hitl](references/plugins/hitl/) |
-| **Embed an AI agent tightly coupled to this flow** | [references/plugins/inline-agent/](references/plugins/inline-agent/) — scaffolded via `uip agent init --inline-in-flow`, node type `uipath.agent.autonomous` |
+| **Invoke an agent (coded or low-code)** | [references/plugins/agent/](references/plugins/agent/) — node type `uipath.core.agent.{key}`, covers both in-solution sibling projects and Orchestrator-published agents |
+| **Embed a low-code agent tightly coupled to this flow** | [references/plugins/inline-agent/](references/plugins/inline-agent/) — node type `uipath.agent.autonomous`, low-code (`agent.json`) only. For coded agents, use the [`agent`](references/plugins/agent/) plugin. |
+| **Use a coded agent as a tool for another agent** | [references/plugins/agent/impl.md](references/plugins/agent/impl.md) § Using an Agent as a Tool Resource — deploy coded agent first, then add as `uipath.agent.resource.tool.agent` resource |
 | **Create a resource that doesn't exist yet** | Use `core.logic.mock` placeholder — see [CLI: Replace a mock](references/flow-editing-operations-cli.md#replace-a-mock-with-a-real-resource-node) + relevant plugin's `impl.md` |
 | **Add data transform nodes** | [references/plugins/transform/impl.md](references/plugins/transform/impl.md) |
 | **Create a subflow** | [references/plugins/subflow/impl.md](references/plugins/subflow/impl.md) + [JSON: Create a subflow](references/flow-editing-operations-json.md#create-a-subflow) |
@@ -384,8 +386,8 @@ When you finish building or editing a flow, report to the user:
   - [flow](references/plugins/flow/) — Published flows as subprocesses (`uipath.core.flow.{key}`)
   - [api-workflow](references/plugins/api-workflow/) — Published API functions (`uipath.core.api-workflow.{key}`)
   - [hitl](references/plugins/hitl/) — Human input via UiPath Apps (`uipath.core.hitl.{key}`)
-  - [agent](references/plugins/agent/) — Published AI agent resources (`uipath.core.agent.{key}`)
-  - [inline-agent](references/plugins/inline-agent/) — Autonomous agent embedded inside the flow project (`uipath.agent.autonomous`), scaffolded via `uip agent init --inline-in-flow`
+  - [agent](references/plugins/agent/) — AI agents (`uipath.core.agent.{key}`), both in-solution sibling projects and Orchestrator-published. Covers coded (Python) and low-code. Also covers the agent-as-tool-resource pattern.
+  - [inline-agent](references/plugins/inline-agent/) — Low-code agent bundled inside the flow project as a UUID-named subdirectory (`uipath.agent.autonomous`). For coded agents, use the [`agent`](references/plugins/agent/) plugin.
   - [queue](references/plugins/queue/) — Orchestrator queue item creation
 - **[Pack / Publish / Deploy](/uipath:uipath-platform)** — Orchestrator deployment only when explicitly requested (uipath-platform skill). Default publish path is Studio Web via `uip solution upload <SolutionDir>` (Step 8).
 

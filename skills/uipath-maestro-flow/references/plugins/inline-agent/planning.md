@@ -2,6 +2,8 @@
 
 Inline agent nodes embed an autonomous AI agent **inside** the flow project. The agent definition lives as a subdirectory of the flow project and is published together with the flow — no separate agent project, no tenant publishing step. Unlike [published agents](../agent/planning.md), the node type is fixed and the agent is bound to the flow via a local `projectId` rather than a registry-resolved resource key.
 
+For coded (Python) agents, use the [`agent`](../agent/planning.md) plugin (`uipath.core.agent.{key}`) — inline agents are low-code only.
+
 ## Node Type
 
 `uipath.agent.autonomous`
@@ -29,6 +31,7 @@ Do not inline an agent you intend to reuse. Inline agents are private to the flo
 ### When NOT to Use
 
 - **Agent already exists as a published tenant resource** — use the [published agent](../agent/planning.md) node instead
+- **Coded (Python) agent** — use the [`agent`](../agent/planning.md) plugin, not inline-agent
 - **Task is deterministic** — use [Script](../script/planning.md) or [Decision](../decision/planning.md)
 
 ## Ports
