@@ -19,6 +19,7 @@ Signal: user describes a **goal or requirement**, not a pack to apply, not an er
 - [../../policy-assign.md](../../policy-assign.md) — when a new policy needs deploying after creation
 - [../../principals-lookup.md](../../principals-lookup.md) — when deployment level is group/user
 - [../../property-labels.md](../../property-labels.md) — human labels + descriptions for every property shown in plan presentation, deploy/patch records
+- [../../compliance-impact.md](../../compliance-impact.md) — before/after posture delta against local compliance packs; runs before the approval gate
 
 ## Input contract
 
@@ -36,14 +37,14 @@ Signal: user describes a **goal or requirement**, not a pack to apply, not an er
 ### 1. Fetch product catalog, templates, and tenant deployment (parallel)
 
 ```bash
-uip admin aops-policy product list --output json
-uip admin aops-policy deployment tenant get "$UIPATH_TENANT_ID" --output json
+uip gov aops-policy product list --output json
+uip gov aops-policy deployment tenant get "$UIPATH_TENANT_ID" --output json
 
 # For each product, in parallel:
-uip admin aops-policy template get <productIdentifier> --output json
+uip gov aops-policy template get <productIdentifier> --output json
 
 # For each deployed custom policy (tenantPolicies where policyIdentifier != null):
-uip admin aops-policy get <policyIdentifier> --output json    # returns metadata + data.data
+uip gov aops-policy get <policyIdentifier> --output json    # returns metadata + data.data
 ```
 
 Build a catalog map:
@@ -84,7 +85,24 @@ For each matching product, check the catalog:
 | Custom policy deployed, values already set | **NO-OP** — requirement already satisfied. |
 | Custom policy deployed, values differ | **UPDATE** — diff current vs. proposed. |
 
+### 3b. Run compliance impact — REQUIRED, not optional
+
+> **Critical Rule #9 applies: no plan may be presented to the user without the impact delta rendered inside it.** This step is not skippable even for "obviously small" changes — users can't judge that without the numbers. If the impact run fails (cache miss, unreadable pack, CLI hiccup), halt and tell the user. Do NOT proceed to Step 4 with a blank impact section.
+
+Compute how the proposal shifts posture against every pack in `assets/packs/`. Follow the recipe in [../../compliance-impact.md](../../compliance-impact.md):
+
+1. Extract all local packs in parallel (once per session — cache per-run).
+2. Hydrate the BEFORE cache (parallel `deployed-policy get` per `(licenseType, product)` pair touched by any pack).
+3. For each affected product in the plan, build an AFTER cache by swapping the target entry's `data` for the proposed merged `formData`.
+4. Run `node assets/scripts/impact.mjs --target-product <productIdentifier> --json-out <path>`.
+
+If the plan touches multiple products, run one impact pass per product and merge the per-pack deltas into a single block. Unaffected packs are listed once at the end.
+
+Stash the impact JSON path — the final report references it, and Critical Rule #9 requires it surface in Step 4.
+
 ### 4. Present the plan
+
+Every plan Claude presents to the user has the same fixed skeleton. The impact block is **inside** the plan, immediately above the approval prompt — if you find yourself writing the `Proceed?` line without a `Compliance impact:` section above it, stop and go back to Step 3b.
 
 Use [property-labels.md](../../property-labels.md) to render human labels alongside technical keys for every line. Format: `<Label> (<technical-key>): <from> → <to>`.
 
@@ -110,8 +128,17 @@ Matching products (2):
         Tenant processes feed    (PackageFeeds.TenantPackages):    (kept On)
         Needed from you: policy name confirmation, priority, deployment level
 
+Compliance impact of this plan:
+  SOC 2 Type 2 (v1.0.3)    8/17 → 10/17  (+2)
+     ✓ improves:   CC6.1 — Logical access controls (AITrustLayer region restriction)
+     ✓ improves:   CC6.7 — Transmission of data (Development feed restriction)
+  ISO 42001 (v1.0.0)       7/21 → 9/21  (+2)
+  ISO 27001 (v2.0.1)      (unaffected)
+
 Apply this plan? (y / partial / n)
 ```
+
+If the impact summary shows `mandatoryRegressions > 0`, change the prompt default to `n` and surface the regressed clause(s) by id before the prompt. The user must type `yes` explicitly to proceed.
 
 For products not yet covered in `property-labels.json` (Robot, IntegrationService, etc. as of today), fall back to the raw key — note this in the plan: `(no human label available — using raw key)`.
 
@@ -138,8 +165,8 @@ If the plan creates a new policy with group or user scope, call [../../principal
   PackageFeeds.PersonalWorkspace: false
 
 Requirement satisfied. Records written to:
-  ./patch-record-iso-42001-ai-trust-layer-<ts>.json
-  ./deploy-record-custom-dev-package-restriction-<ts>.json
+  $HOME/uipath-governance/audit/patch-records/patch-record-iso-42001-ai-trust-layer-<ts>.json
+  $HOME/uipath-governance/audit/deploy-records/deploy-record-custom-dev-package-restriction-<ts>.json
 ```
 
 ## Advise-only mode
@@ -161,6 +188,7 @@ If the user phrased as "just tell me what's possible" / "how can I do X" / "what
 ## Anti-Patterns
 
 - **Never execute without explicit `y`.** Plan must be shown first.
+- **Never present a plan without the `Compliance impact:` block above the `Proceed?` prompt.** Critical Rule #9. Even if the user didn't mention compliance, even if the change looks "obviously small" — the delta tells the user whether this change moves them toward or away from every standard in `assets/packs/`. Silently skipping this is the single most common way the skill ships a worse outcome than the user expected. No exceptions.
 - **Never skip the tenant fetch.** Without it you can't distinguish UPDATE from CREATE.
 - **Never invent policy names.** Ask the user for CREATE names.
 - **Never propose changes to fields that already match the desired value.** Flag them as "already satisfied."

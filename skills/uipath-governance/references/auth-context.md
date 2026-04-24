@@ -43,3 +43,26 @@ Before any capability runs, verify:
 2. `~/.uipath/.auth` exists and `UIPATH_TENANT_ID` is non-empty.
 
 If either fails, halt and ask the user to run `uip login` (or `uip login --authority https://alpha.uipath.com` for non-prod).
+
+## Tenant-intent validation (Apply / Advise / Diagnose)
+
+When the user's prompt names a specific tenant (e.g., *"on staging tenant"*, *"in production"*, *"apply to the prod tenant"*), compare their named tenant against `UIPATH_TENANT_NAME` and `UIPATH_URL` **before** taking any mutation action.
+
+Detection: match the named tenant against these substrings — `staging`, `prod`, `production`, `alpha`, `dev`, `development`, `sandbox`, `qa`, `test`, or any explicit tenant display name the user gives (e.g., *"MedCore-Prod"*).
+
+On mismatch, halt with:
+
+```
+⚠ Your prompt says 'staging tenant' but you are logged into 'DefaultTenant' on
+  https://cloud.uipath.com (organization: procodeapps).
+
+  To apply on the tenant you named, run one of:
+    uip login                                      # interactive pick
+    uip login --authority https://alpha.uipath.com # non-prod authority
+
+  Or, if this IS the tenant you meant, reply 'yes, continue on <currentTenantName>'.
+```
+
+Accept a literal yes-with-tenant-name to proceed; anything else halts with no side effects. This prevents the most expensive category of mistakes — applying a pack or a policy update to the wrong tenant.
+
+**Diagnose and Check are read-only** and still perform this validation. Read-only operations against the wrong tenant waste time and pollute caches with mismatched state; better to catch it upfront.

@@ -54,21 +54,123 @@ Applicable (product policies, 4 files):
 Skipped (access policies — out of scope, 0 files)
 ```
 
-### Step 4 — Determine scope
+### Step 4 — Determine scope (both axes)
 
-[scope-selection.md](scope-selection.md). Default: all clauses. Narrow only on explicit signal.
+[scope-selection.md](scope-selection.md). Two independent axes, decided from the prompt:
+
+- **Clause scope** — default is every clause; narrowed only on explicit signal (obligation level / clause IDs / NL phrase).
+- **Deployment target** — default is tenant-only; narrower scopes trigger an automatic cascade (`group X` → `[tenant, group X]`; `user Y` → `[tenant, group(optional), user Y]`). Cascade turns off only when the user explicitly says "group-only" / "don't touch tenant" / similar.
+
+Produce two outputs for the rest of the workflow:
+
+```jsonc
+{
+  "clauseScope": {
+    "inScopeClauseIds": ["HIPAA-01", "HIPAA-02", ...],
+    "obligationNarrowing": "mandatory+conditional",   // "none" | "mandatory" | "mandatory-strict" | "mandatory+recommended" | "all-including-optional" | "explicit-ids" | "nl-match"
+    "token": "mandatory"                               // for policy naming — null means "no narrowing"
+  },
+  "deploymentTargets": [                               // ordered ancestor → descendant
+    { "level": "tenant", "targetId": "<tenantGuid>", "targetName": "DefaultTenant" },
+    { "level": "group",  "targetId": "<groupGuid>",  "targetName": "engineering" }
+  ],
+  "cascadeEnabled": true,                              // false when user said "group-only"
+  "narrowestNamedScope": "group"                        // for policy naming — "tenant" | "group" | "user"
+}
+```
+
+### Step 4.5 — Resolve principals (if deployment target includes group or user)
+
+Runs before pre-flight so the user sees concrete GUIDs and names in the preview. For every deployment target whose `level ∈ {group, user}`:
+
+1. Call [../../principals-lookup.md](../../principals-lookup.md) with the name from the prompt (e.g., "engineering").
+2. If multiple matches, surface candidates:
+   ```
+   Found 3 groups matching "engineering":
+     [1]  engineering              (39 members) <guid>
+     [2]  engineering-leadership   (6 members)  <guid>
+     [3]  engineering-interns      (12 members) <guid>
+   Pick the group to apply to (1/2/3) or type "all" to apply to each, or "n" to cancel.
+   ```
+3. On zero matches or user cancellation: halt with a clear error message and no side effects.
+4. Write the resolved `targetId` + exact `targetName` back into the `deploymentTargets[]` entry.
+
+Skip this step when the only target is tenant (already resolved from `~/.uipath/.auth`).
 
 ### Step 5 — Pre-flight confirmation
 
+Full-scope, tenant-only apply — baseline:
+
 ```
-Pack: iso-27001-2022 v1.0.0
-Scope: all (9 clauses, 4 product policies to apply)
-Will CREATE:  AITrustLayer, Development, Robot, StudioWeb
-Will DEPLOY to: tenant DefaultTenant
+Pack: hipaa-2024 v1.0.0
+Clause scope: all (15 clauses, 4 product policies to apply)
+Will CREATE (new policies, base = template defaults):
+  - AITrustLayer → hipaa-2024-ai-trust-layer
+  - Development  → hipaa-2024-development
+  - Robot        → hipaa-2024-robot
+  - StudioWeb    → hipaa-2024-studio-web
+Will DEPLOY to (cascade):
+  [TENANT]  DefaultTenant (<tenantGuid>)
+Proceed? (y/n)
+```
+
+Narrowed deployment scope with cascade — SOC 2 on engineering group:
+
+```
+Pack: soc2-type2-2017 v1.0.3
+Clause scope: all (17 clauses, 3 applicable product policies)
+Will CREATE:
+  - AITrustLayer → soc2-type2-2017-ai-trust-layer
+  - Development  → soc2-type2-2017-development
+  - Robot        → soc2-type2-2017-robot
+Will DEPLOY to (cascade):
+  [TENANT]  staging-tenant (<tenantGuid>)
+  [GROUP]   engineering (<groupGuid>)  (39 members)
+Proceed? (y/n)
+```
+
+Narrowed clause scope — note the informational line per affected file:
+
+```
+Pack: soc2-type2-2017 v1.0.3
+Clause scope: Mandatory + ConditionalMandatory (12 of 17 clauses)
+Will CREATE:
+  - AITrustLayer → soc2-type2-2017-mandatory-ai-trust-layer
+      Subset mode: 34/92 properties from pack; the other 58 use template defaults.
+      To instead modify an existing policy in place, ask Advise/Diagnose (not Apply).
+Will DEPLOY to (cascade):
+  [TENANT]  DefaultTenant (<tenantGuid>)
+Proceed? (y/n)
+```
+
+Cascade OFF (user said "group-only" / "don't touch tenant"):
+
+```
+Will DEPLOY to:
+  [GROUP]  engineering (<groupGuid>)   (cascade disabled by prompt)
 Proceed? (y/n)
 ```
 
 Require `y`. Anything else halts with no side effects.
+
+### Step 5.5 — Pre-apply 409 check + prior-deploy reuse
+
+Before Phase 1, run `uip gov aops-policy list --search "<policyName>" --output json` for each planned policy. If a policy with the exact name already exists:
+
+1. Pull the prior deploy record (search `$HOME/uipath-governance/audit/deploy-records/` for records that list this policy in `created[]`). If found, surface to the user:
+   ```
+   A policy with this name already exists — created by an earlier Apply run:
+     policy:     hipaa-2024-ai-trust-layer (<guid>)
+     created by: deploy-record-hipaa-2024-20260420T091301Z.json (user-email, pack v1.0.0)
+
+   Reuse the existing policy and just add the new deployment binding?
+     (y — reuse existing GUID, skip CREATE, proceed to DEPLOY)
+     (n — halt so you can rename / delete / decide manually)
+   ```
+2. On `y`: record the entry as `reusedExisting: true` in the new deploy record with `priorDeployRecord: <path>`, skip Phase 1 CREATE for that entry, and route directly to Phase 2 DEPLOY with the existing GUID.
+3. On `n` or no prior deploy record found: halt with a 409 conflict per Critical Rule #5.
+
+This is the only carve-out from Critical Rule #5 (which forbids silent `create→update` fallback). Reuse is explicit, user-confirmed, and named in the audit trail — it is **not** an update.
 
 ### Step 6 — Synthesize
 
@@ -88,30 +190,40 @@ For each `skipped` (access) policy file:
 
 Halt on any 4xx — remaining files become `status: "skipped", reason: "prior-failure"`.
 
-### Step 8 — Phase 2: DEPLOY (bulk configure, one call per scope)
+### Step 8 — Phase 2: DEPLOY (one `configure` call per cascade target)
 
-Skip if `--skip-deploy`. Otherwise:
+Skip if `--skip-deploy`. Otherwise, loop over every entry in `deploymentTargets[]` from Step 4. For each target (tenant, group, or user):
 
-1. **Group created policies by deployment scope.** Each policy has a target `(level, targetId)` derived from:
-   - User prompt override ("apply to the Finance group") → that scope for all policies
-   - Or `policy.deploymentLevel` in each pack file (typically `tenant` in V1 packs)
-   - Default → tenant, using `UIPATH_TENANT_ID` + `UIPATH_TENANT_NAME` from `~/.uipath/.auth`
+1. **Build the assignment array.** Every policy produced or reused in Phase 1 gets one `(productIdentifier, licenseTypeIdentifier, policyIdentifier)` entry, regardless of the policy's pack-declared `deploymentLevel` — the cascade reuses the same policies across every named scope.
 
-2. **For any group/user targets without a resolved `targetId`**, call [../../principals-lookup.md](../../principals-lookup.md) to fetch candidates and prompt for selection. Do this BEFORE Step 3 so each scope has a concrete GUID.
-
-3. **For each distinct scope, issue ONE `deployment {tenant|group|user} configure` call.** This is the key change from the previous design:
-   - The old flow called `assign-tenant` per policy (which was a full-replace API call) — sequential calls wiped prior assignments. **"Last deploy wins" bug.**
-   - The new flow calls [../../policy-assign.md](../../policy-assign.md) ONCE per scope, passing the complete assignment array (all created policies for that scope, plus any existing assignments that should be preserved).
-
-4. **Per-scope steps** (delegated to `policy-assign.md`):
-   - Read current scope state (`deployment tenant get` etc.) so existing assignments for other `(product, licenseType)` slots aren't clobbered.
-   - Merge: `currentAssignments ∪ newAssignments` with new entries winning on conflict.
+2. **Delegate to [../../policy-assign.md](../../policy-assign.md).** That primitive handles the merge-first contract:
+   - Read current scope state (`deployment tenant|group|user get <id>`).
+   - Merge: `currentAssignments ∪ newAssignments` with new entries winning on conflict. **Every** existing `(product, licenseType)` slot the pack doesn't touch is preserved.
    - Write the merged array to a temp JSON file.
-   - Call `deployment tenant configure --input <file>` (or group/user variant).
+   - Call `deployment {tenant|group|user} configure <id> --name <targetName> --input <file> --output json`.
 
-Collect `{ status, scope, mergedAssignmentCount, warnings[] }` per scope. Halt on 4xx.
+3. **Collect results** per target: `{ level, targetId, targetName, status, mergedAssignmentCount, addedAssignmentCount, replacedAssignmentCount, warnings[] }`. Halt on 4xx — remaining cascade targets become `status: "skipped", reason: "prior-failure"`.
 
-**Count discipline:** If a pack has 4 AITL + Robot + Studio + StudioWeb policies all targeting the same tenant, Phase 2 makes **1 API call**, not 4. If the pack splits across tenant + one group + one user scope, that's 3 calls (one per distinct scope).
+**Count discipline.** Same pack, same set of policies, applied via the engineering-group cascade → **two** `configure` calls (one for tenant, one for the group). Same call count whether the pack has 1 or 20 product policies — the atomic configure API takes the full assignment list per target. If cascade is off (`"group-only"`), it's exactly one call (the named scope).
+
+**Example — HIPAA tenant-wide (Act 2 UX path):**
+```
+Phase 2 (1 configure call):
+  [TENANT] DefaultTenant ← 4 policies pinned (AITL, Development, Robot, StudioWeb)
+```
+
+**Example — SOC 2 to engineering group (Act 2 CLI path, cascade on):**
+```
+Phase 2 (2 configure calls):
+  [TENANT] staging-tenant ← 3 policies pinned (AITL, Development, Robot)
+  [GROUP]  engineering    ← 3 policies pinned (AITL, Development, Robot)
+```
+
+**Example — cascade off:**
+```
+Phase 2 (1 configure call):
+  [GROUP] engineering ← 3 policies pinned (cascade disabled by prompt)
+```
 
 ### Step 9 — Write deploy record
 
@@ -119,22 +231,56 @@ Collect `{ status, scope, mergedAssignmentCount, warnings[] }` per scope. Halt o
 
 ### Step 10 — Report
 
+Group deployment with cascade (Act 2 CLI path):
+
 ```
-Pack applied: iso-27001-2022 v1.0.0 → tenant DefaultTenant
+Pack applied: soc2-type2-2017 v1.0.3 → cascade [tenant, group "engineering"] on staging-tenant
+
+Created (3):
+  ✓ AITrustLayer  → soc2-type2-2017-ai-trust-layer  (d0a68808-...)
+  ✓ Development   → soc2-type2-2017-development     (f1b2c3d4-...)
+  ✓ Robot         → soc2-type2-2017-robot           (7a8b9c0d-...)
+
+Deployed (2 cascade targets, 3 policies each):
+  ✓ [TENANT] staging-tenant    → +3 pinned, 0 replaced, 2 preserved
+  ✓ [GROUP]  engineering (39 members) → +3 pinned, 0 replaced, 0 preserved
+
+Deploy record: $HOME/uipath-governance/audit/deploy-records/deploy-record-soc2-type2-2017-20260423T200455Z.json
+```
+
+Tenant-only apply (Act 2 UX path):
+
+```
+Pack applied: hipaa-2024 v1.0.0 → tenant DefaultTenant
 
 Created (4):
-  ✓ AITrustLayer  → iso-27001-2022-AITrustLayer (d0a68808-...)
-  ✓ Development   → iso-27001-2022-Development  (f1b2c3d4-...)
-  ✓ Robot         → iso-27001-2022-Robot        (7a8b9c0d-...)
-  ✓ StudioWeb     → iso-27001-2022-StudioWeb    (e5f6a7b8-...)
+  ✓ AITrustLayer  → hipaa-2024-ai-trust-layer  (d0a68808-...)
+  ✓ Development   → hipaa-2024-development     (f1b2c3d4-...)
+  ✓ Robot         → hipaa-2024-robot           (7a8b9c0d-...)
+  ✓ StudioWeb     → hipaa-2024-studio-web      (e5f6a7b8-...)
 
-Deployed (4, all tenant-level):
-  ✓ iso-27001-2022-AITrustLayer
-  ✓ iso-27001-2022-Development
-  ✓ iso-27001-2022-Robot
-  ✓ iso-27001-2022-StudioWeb
+Deployed (1 target, 4 policies):
+  ✓ [TENANT] DefaultTenant → +4 pinned, 0 replaced, 0 preserved
 
-Deploy record: ./deploy-record-iso-27001-2022-<ts>.json
+Deploy record: $HOME/uipath-governance/audit/deploy-records/deploy-record-hipaa-2024-20260423T201030Z.json
+```
+
+Reuse path (Critical Rule #5 carve-out, user confirmed):
+
+```
+Pack applied: soc2-type2-2017 v1.0.3 → cascade [tenant, group "engineering"]
+
+Reused (3) — policies already existed from an earlier Apply run:
+  ↻ AITrustLayer  → soc2-type2-2017-ai-trust-layer  (d0a68808-...)
+      prior: deploy-record-soc2-type2-2017-20260420T091301Z.json
+  ↻ Development   → soc2-type2-2017-development     (f1b2c3d4-...)
+  ↻ Robot         → soc2-type2-2017-robot           (7a8b9c0d-...)
+
+Deployed (2 targets — new scope added to existing policies):
+  ✓ [TENANT] staging-tenant → 0 replaced, 3 preserved
+  ✓ [GROUP]  engineering    → +3 pinned (first time this group gets SOC 2)
+
+Deploy record: <path>
 ```
 
 ## Dispatch Table (within this capability)
@@ -189,6 +335,10 @@ Do NOT pre-create stub files for products without documented quirks. An empty fi
 - **Never invent product quirks.** If the shared CREATE recipe works, no product file is needed.
 - **Never prompt for scenario choice.** Derive from the user's prompt per [scope-selection.md](scope-selection.md).
 - **Never run phases or policies in parallel.** Sequential = predictable fail-fast boundary.
-- **Never auto-pick a group / user.** Always surface candidates for explicit selection.
-- **Never hand-edit `formData`.** Pack is the source of truth; `policy-crud` handles the defaults merge.
+- **Never auto-pick a group / user.** Always surface candidates for explicit selection at Step 4.5.
+- **Never silently skip cascade.** If the user named a group or user, the default is tenant + that scope (defense in depth). Cascade turns off only on explicit opt-out phrasing — if the user didn't say "group-only" / "don't touch tenant", include tenant.
+- **Never silently fall back to `update` on 409.** The only carve-out is the user-confirmed reuse path in [Step 5.5](#step-55--pre-apply-409-check--prior-deploy-reuse) — and that reuse never modifies the existing policy's content, only adds new deployment bindings.
+- **Never create the same policy twice across cascade targets.** One synthesized policy per `(pack, clauseScope, product)` binds to every cascade target via separate `configure` calls — not duplicated.
+- **Never hand-edit `formData`.** Pack is the source of truth; `policy-crud` handles the defaults merge via `merge-overrides.mjs`.
 - **Never silently drop a skipped policy.** Always record in `deploy-record.created[]` with a reason.
+- **Never skip tenant-intent validation** when the user's prompt names a tenant — see [auth-context.md#tenant-intent-validation](../../auth-context.md#tenant-intent-validation-apply--advise--diagnose). Wrong-tenant applies are catastrophic; one-second check prevents one-hour cleanup.

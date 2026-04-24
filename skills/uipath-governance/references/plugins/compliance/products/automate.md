@@ -8,7 +8,7 @@ Product-specific conventions for `productIdentifier: "Automate"`. Follow the sha
 |---|---|
 | `--product-name` | `Automate` (exact case) |
 | Default license | varies — Automate is a newer SKU bundle; check org's license mix |
-| Restricted | Yes — `"isRestricted": true` in `uip admin aops-policy product list`. Some orgs don't have this product enabled. |
+| Restricted | Yes — `"isRestricted": true` in `uip gov aops-policy product list`. Some orgs don't have this product enabled. |
 
 ## Shared quirks
 
@@ -25,6 +25,6 @@ See [_studio-family.md](_studio-family.md) — enum casing for `default-project-
 
 | Error message fragment | Likely cause | Action |
 |---|---|---|
-| `403 Forbidden` on create or assign | Org may not have Automate enabled | Halt. Check `uip admin aops-policy product get Automate` — if `isRestricted: true` and not in the org's entitlement, skip the policy with a `reason: "product-not-entitled"` in the deploy record. |
+| `403 Forbidden` on create or assign | Org may not have Automate enabled | Halt. Check `uip gov aops-policy product get Automate` — if `isRestricted: true` and not in the org's entitlement, skip the policy with a `reason: "product-not-entitled"` in the deploy record. |
 
 Plus the shared patterns in [_studio-family.md](_studio-family.md#shared-error-triage).

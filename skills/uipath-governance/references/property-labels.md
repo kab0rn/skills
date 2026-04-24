@@ -5,7 +5,7 @@ Technical field names in `formData` (e.g., `azure-openai-control-toggle`, `pii-p
 ## Runtime fetch — the only source
 
 ```bash
-uip admin aops-policy template get <productIdentifier> \
+uip gov aops-policy template get <productIdentifier> \
   --output-template-locale-resource <tmp>/locale-<productIdentifier>.json \
   --output json
 ```
@@ -82,3 +82,24 @@ For boolean values:
 ## Coverage
 
 The locale resource is emitted per product from the live AOPS template bundle — coverage mirrors whatever the AOPS team has localized. Empirically complete for AITrustLayer, Assistant, AssistantWeb, Business, Development, Automate, StudioPro. Partial or missing for Robot, StudioWeb, IntegrationService at time of writing; if a lookup fails for those, fall back to the raw key.
+
+## Unresolved i18n references — treat as missing
+
+The locale API sometimes returns the locale KEY itself as the "value" instead of a translated string (e.g., `allowed-llm-regions-label` resolves to `"AITrustLayer.allowed-regions-label"` — the i18n reference, not "Allowed LLM Regions"). Displaying this verbatim produces meaningless noise like:
+
+```
+❌  AITrustLayer.allowed-regions-label (allowed-llm-regions):  Off
+```
+
+**Detection rule.** Consider the returned value an unresolved reference (and fall back) when it matches this pattern:
+
+```
+^[A-Z][A-Za-z0-9]+(\.[a-z0-9][A-Za-z0-9-]*)+(-(label|description|tooltip))?$
+```
+
+In plainer terms: it begins with the product identifier (PascalCase), contains dot-delimited kebab-case segments, and optionally ends with one of the known label suffixes. If it matches, treat the lookup as **failed** — fall through to:
+
+1. Title-case the leaf segment of the formData path (`allowed-llm-regions.europe` → `Europe`; `pii-processing-mode` → `Pii Processing Mode` → hand-tuned to `PII Processing Mode` only when the skill ships a manual override).
+2. If the path has no meaningful leaf, fall back to the raw path string inside code ticks.
+
+Never render the unresolved reference as-is in user-facing output, patch records, or deploy records. The `label` field in audit records stays empty (or takes the title-case fallback) so consumers downstream can choose their own render.

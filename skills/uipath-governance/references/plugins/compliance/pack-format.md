@@ -1,5 +1,14 @@
 # Pack Format Reference
 
+> **`.uipolicy` is a ZIP archive — you MUST extract it before reading anything.** The file is not JSON; opening it with `jq` or a text editor produces garbage. Extract to a temp dir first:
+>
+> ```bash
+> unzip -q "<pack>.uipolicy" -d "$TMP_ROOT/uipath-governance/pack-<ts>/extracted"
+> # Then read JSON files under the extracted dir.
+> ```
+>
+> The rest of this document describes the files inside the archive.
+
 A compliance pack is a ZIP archive with the `.uipolicy` extension. Inside are JSON files only.
 
 ## Structure

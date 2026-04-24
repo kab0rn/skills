@@ -1,27 +1,52 @@
 # CLI Known Issues
 
-Live bugs in `@uipath/aops-governance-tool` that affect this skill.
+Live bugs / sharp edges in `@uipath/aops-policy-tool` that affect this skill.
 
-## ~~1. Missing `--data-file` path returns misleading 404~~ — FIXED
+## ~~1. Missing `--input` path returns misleading 404~~ — FIXED
 
-The CLI now validates `--data-file` before the API call and surfaces `"Data file not found: <resolved path>"`. Verified against the updated commit.
+The CLI now validates `--input` before the API call and surfaces `"Data file not found: <resolved path>"`. Verified against the updated commit.
 
-## 2. Omitting metadata flags returns 500 — affects both `create` AND `update`
+## 2. `policy update` is a full-replace — omitting optional flags clears server-side fields
 
-**Affected commands:**
-- `uip admin aops-policy create --name X --product-name AITrustLayer --data-file ./valid.json` (no metadata flags)
-- `uip admin aops-policy update --policy-identifier <id> --name X --product-name X --data-file ./valid.json` (no metadata flags)
-
-**Expected:** 400 with validation message listing the missing fields, or the CLI should apply defaults / read-modify-write the existing values for `update`.
-
-**Actual:** `500 Internal Server Error` — the API chokes on null metadata fields.
-
-**CLI flags treat them as optional in `--help`** but the API requires all three: `--description`, `--priority`, `--availability`.
+**Behavior:** `update` requires `--identifier`, `--name`, `--product-name`. The remaining flags (`--description`, `--priority`, `--availability`, `--input`) are optional at the CLI level, but per the CLI's own description text, **omitting any of them clears that field on the server**. There is no partial-patch mode.
 
 **Impact on skill:**
-- **CREATE path:** The creation plugin always passes all flags because the pack provides them — usually safe.
-- **UPDATE path:** Particularly nasty. If the caller is patching only `formData` (e.g., diagnosis fix), it's natural to omit metadata flags — but doing so destroys the policy with a 500. Workaround documented in [policy-crud.md UPDATE recipe](policy-crud.md#update-recipe): always read current metadata via `aops-policy get` and pass it through unchanged.
+- **CREATE path:** The creation plugin always passes all flags from the pack — safe.
+- **UPDATE path:** If the caller is patching only `formData` (e.g., diagnosis fix), they must still re-pass the current `--description`, `--priority`, `--availability`, otherwise those get wiped. Workaround documented in [policy-crud.md UPDATE recipe](policy-crud.md#update-recipe): always read current metadata + data via `aops-policy get` and pass them through unchanged.
 
-**Validated:** This bit us during a real diagnosis-mode update — first call returned 500, retry with full metadata succeeded.
+**Status:** This is documented CLI behavior (not a bug), but it is a sharp edge — the skill treats all four flags as effectively required on update.
 
-**Fix:** Either the CLI should supply sensible defaults / read existing values on `update`, or the API should return 400 with specific field names. Marking the flags as `requiredOption` in commander would also surface the issue at validation time.
+## 3. Never pipe `uip` output through `head` / `tail` / `less`
+
+**Symptom:** `uip gov aops-policy list --output json | head -20` crashes with `EPIPE` or "broken pipe" — the CLI's terminal sink throws when its stdout is closed early.
+
+**Impact:** truncates or obscures the actual JSON response; in some shells the non-zero exit aborts your downstream script.
+
+**Workaround:** always redirect `uip` output to a file first, then inspect the file with whatever viewer you want.
+
+```bash
+# ❌ breaks
+uip gov aops-policy list --output json | head -50
+
+# ✓ works
+uip gov aops-policy list --output json > /tmp/policies.json
+head -50 /tmp/policies.json
+# or use jq:
+jq '.Data.result[0:5]' /tmp/policies.json
+```
+
+## 4. `template get --output-form-data` pollutes stdout with a large JSON envelope
+
+**Symptom:** `uip gov aops-policy template get <product> --output-form-data <file>` writes the fillable blueprint to `<file>` (correct) AND prints the full template tree — including the i18n bundle — to stdout (100 KB+ for products like AITrustLayer).
+
+**Impact:** floods agent context and terminal. Every stray byte lands in the conversation.
+
+**Workaround:** redirect stdout to `/dev/null` — you already have the payload you care about in `<file>`.
+
+```bash
+uip gov aops-policy template get AITrustLayer \
+  --output-form-data "$tmp/defaults.json" \
+  --output json > /dev/null
+```
+
+Same applies to `--output-template-locale-resource <file>` and the bulk `template list --output-dir <dir>` variants.

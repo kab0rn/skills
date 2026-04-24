@@ -36,13 +36,13 @@ Primitive: bind created policies to scopes. Used by **Apply** (Phase 2 deploymen
 
 ```bash
 # For tenant:
-uip admin aops-policy deployment tenant get "<targetId>" --output json
+uip gov aops-policy deployment tenant get "<targetId>" --output json
 
 # For group:
-uip admin aops-policy deployment group get "<targetId>" --output json
+uip gov aops-policy deployment group get "<targetId>" --output json
 
 # For user:
-uip admin aops-policy deployment user get "<targetId>" --output json
+uip gov aops-policy deployment user get "<targetId>" --output json
 ```
 
 Response includes `tenantPolicies[]` / `groupPolicies[]` / `userPolicies[]` — each entry is a `(productIdentifier, licenseTypeIdentifier, policyIdentifier)` triple. Entries with no `policyIdentifier` or `policyIdentifier: null` mean no custom policy is pinned at that scope.
@@ -77,7 +77,7 @@ printf '%s' '[
 #### Tenant
 
 ```bash
-uip admin aops-policy deployment tenant configure "<targetId>" \
+uip gov aops-policy deployment tenant configure "<targetId>" \
   --tenant-name "<targetName>" \
   --input "$inputFile" \
   --output json
@@ -88,7 +88,7 @@ uip admin aops-policy deployment tenant configure "<targetId>" \
 #### Group
 
 ```bash
-uip admin aops-policy deployment group configure "<targetId>" \
+uip gov aops-policy deployment group configure "<targetId>" \
   --group-name "<targetName>" \
   --input "$inputFile" \
   --output json
@@ -97,7 +97,7 @@ uip admin aops-policy deployment group configure "<targetId>" \
 #### User
 
 ```bash
-uip admin aops-policy deployment user configure "<targetId>" \
+uip gov aops-policy deployment user configure "<targetId>" \
   --user-name "<targetName>" \
   --input "$inputFile" \
   --output json
@@ -112,7 +112,7 @@ Every assignment carries a `licenseTypeIdentifier`. A given product may have mul
 Enumerate available license types via:
 
 ```bash
-uip admin aops-policy license-type list --output json
+uip gov aops-policy license-type list --output json
 ```
 
 When applying a compliance pack, use the license type from the pack's policy file. If the pack doesn't specify, use `NoLicense` for cloud-native tenant-level products (AITrustLayer, AssistantWeb) and consult the product's supported license types otherwise.
@@ -145,9 +145,5 @@ When applying a compliance pack, use the license type from the pack's policy fil
 AOPS resolves `USER → GROUP → TENANT → GLOBAL` at request time. This primitive creates the binding at one scope; effective-policy resolution for a request is handled by the backend. Verify the effective state after a large apply with:
 
 ```bash
-uip admin aops-policy deployed-policy get \
-  --license-type <lt> --product-name <p> \
-  --tenant-identifier "$UIPATH_TENANT_ID" \
-  [--user-identifier <uid>] \
-  --output json
+uip gov aops-policy deployed-policy get <licenseType> <productName> "$UIPATH_TENANT_ID" --output json
 ```

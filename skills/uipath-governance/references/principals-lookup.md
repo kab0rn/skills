@@ -100,4 +100,4 @@ Field names are preliminary — confirm against the live response on first call 
 
 ## Known follow-up
 
-Wrap this endpoint with a first-class `uip` command (e.g. `uip admin directory search-groups` / `search-users`) so the plugin does not need raw curl.
+Wrap this endpoint with a first-class `uip` command (e.g. `uip gov directory search-groups` / `search-users`) so the plugin does not need raw curl.
